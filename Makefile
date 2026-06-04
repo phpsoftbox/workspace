@@ -4,6 +4,10 @@ COMPOSE ?= docker compose --env-file .env -f compose.yml
 WORKSPACE_CONFIG ?= .workspace.ini
 CONFIG_PROFILES := $(strip $(shell sed -nE 's/^[[:space:]]*default_profiles[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$$/\1/p' "$(WORKSPACE_CONFIG)" 2>/dev/null | tail -n 1 | tr ',' ' '))
 PROFILES ?= $(CONFIG_PROFILES)
+EMPTY :=
+space := $(EMPTY) $(EMPTY)
+COMMA := ,
+PROFILE_LIST_CSV := $(subst $(space),$(COMMA),$(strip $(PROFILES)))
 PROFILE_FLAGS = $(foreach profile,$(PROFILES),--profile $(profile))
 PHP_EXEC_USER := $(strip $(shell sed -nE 's/^[[:space:]]*USER_NAME[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$$/\1/p' .env 2>/dev/null | tail -n 1))
 PHP_EXEC_USER := $(if $(PHP_EXEC_USER),$(PHP_EXEC_USER),dev)
@@ -14,6 +18,9 @@ ARGS = $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
 .PHONY: \
 	prepare \
 	require-config \
+	require-app-ready \
+	init \
+	app-key \
 	profiles \
 	config \
 	up \
@@ -30,6 +37,8 @@ ARGS = $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
 	composer-require \
 	composer-require-dev \
 	test \
+	test-coverage \
+	test-coverage-html \
 	cs-check \
 	cs-fix \
 	yarn-install \
@@ -44,23 +53,40 @@ prepare: require-config
 	@test -f .env || cp .env.example .env
 	@mkdir -p local
 	@backend_path="$$(sed -nE 's/^[[:space:]]*BACKEND_PATH[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$$/\1/p' .env | tail -n 1)"; backend_path="$${backend_path:-./local/backend}"; test -d "$$backend_path" || (echo "Missing backend project at $$backend_path. Run: phpsoftbox new backend" >&2; exit 1)
-	@if [[ " $(PROFILES) " == *" frontend "* ]]; then frontend_path="$$(sed -nE 's/^[[:space:]]*FRONTEND_PATH[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$$/\1/p' .env | tail -n 1)"; frontend_path="$${frontend_path:-./local/frontend}"; test -d "$$frontend_path" || (echo "Missing frontend project at $$frontend_path" >&2; exit 1); fi
+
+require-app-ready: prepare
+	@backend_path="$$(sed -nE 's/^[[:space:]]*BACKEND_PATH[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$$/\1/p' .env | tail -n 1)"; backend_path="$${backend_path:-./local/backend}"; test -f "$$backend_path/vendor/autoload.php" || (echo "Missing $$backend_path/vendor/autoload.php. Run: make init" >&2; exit 1)
+	@app_key="$$(sed -nE 's/^[[:space:]]*APP_KEY[[:space:]]*=(.*)[[:space:]]*$$/\1/p' .env | tail -n 1)"; test -n "$$app_key" || (echo "Missing APP_KEY in .env. Run: make init" >&2; exit 1)
 
 profiles: require-config
 	@printf 'Config: %s\n' "$(if $(WORKSPACE_CONFIG),$(WORKSPACE_CONFIG),none)"
 	@printf 'Profiles: %s\n' "$(PROFILES)"
 
+init: app-key composer-install yarn-install
+
+app-key: prepare
+	@key="$$(sed -nE 's/^[[:space:]]*APP_KEY[[:space:]]*=(.*)[[:space:]]*$$/\1/p' .env | tail -n 1)"; \
+	if [ -n "$$key" ]; then \
+		echo "APP_KEY already configured"; \
+	else \
+		key="$$( $(PHP_CLI_RUN) php -r 'echo "base64:" . base64_encode(random_bytes(32));' )"; \
+		tmp="$$(mktemp)"; \
+		awk -v key="$$key" 'BEGIN { done = 0 } /^[[:space:]]*APP_KEY[[:space:]]*=/ { print "APP_KEY=" key; done = 1; next } { print } END { if (done == 0) print "APP_KEY=" key }' .env > "$$tmp"; \
+		mv "$$tmp" .env; \
+		echo "APP_KEY generated"; \
+	fi
+
 config: prepare
 	$(COMPOSE) $(PROFILE_FLAGS) config
 
-up: prepare
+up: require-app-ready
 	$(COMPOSE) $(PROFILE_FLAGS) up -d
 
 down: prepare
-	$(COMPOSE) down --remove-orphans
+	env COMPOSE_PROFILES=$(PROFILE_LIST_CSV) $(COMPOSE) $(PROFILE_FLAGS) down --remove-orphans
 
 down-clear: prepare
-	$(COMPOSE) down -v --remove-orphans
+	env COMPOSE_PROFILES=$(PROFILE_LIST_CSV) $(COMPOSE) $(PROFILE_FLAGS) down -v --remove-orphans
 
 build: prepare
 	$(COMPOSE) $(PROFILE_FLAGS) build --pull
@@ -97,6 +123,12 @@ composer-require-dev: prepare
 
 test: prepare
 	$(PHP_CLI_RUN) composer test
+
+test-coverage: prepare
+	$(COMPOSE) run --rm -e XDEBUG_MODE=coverage php-cli composer test -- --no-coverage --coverage-text
+
+test-coverage-html: prepare
+	$(COMPOSE) run --rm -e XDEBUG_MODE=coverage php-cli composer test
 
 cs-check: prepare
 	$(PHP_CLI_RUN) composer cs:check

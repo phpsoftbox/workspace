@@ -16,6 +16,7 @@ ENV TZ=Europe/Moscow \
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
+        ${PHPIZE_DEPS} \
         bash-completion \
         ca-certificates \
         curl \
@@ -54,14 +55,10 @@ ENV LANG=ru_RU.UTF-8 \
     LANGUAGE=ru_RU:ru \
     LC_ALL=ru_RU.UTF-8
 
+COPY --from=ghcr.io/php/pie:1.4.5-bin /pie /usr/local/bin/pie
+
 RUN set -eux; \
-    pecl channel-update pecl.php.net; \
-    pecl install xdebug-${XDEBUG_VERSION} || ( \
-        curl -fsSL -o /tmp/xdebug.tgz "https://xdebug.org/files/xdebug-${XDEBUG_VERSION}.tgz"; \
-        pecl install /tmp/xdebug.tgz; \
-        rm -f /tmp/xdebug.tgz \
-    ); \
-    docker-php-ext-enable xdebug
+    pie install --no-cache "xdebug/xdebug:${XDEBUG_VERSION}"
 
 RUN set -eux; \
     curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash -; \

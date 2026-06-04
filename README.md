@@ -41,9 +41,8 @@ phpsoftbox workspace:install Workspace
 cd Workspace
 phpsoftbox workspace:init
 phpsoftbox new backend
+phpsoftbox init
 phpsoftbox up
-phpsoftbox composer-install
-phpsoftbox yarn-install
 phpsoftbox vite-dev
 ```
 
@@ -65,15 +64,19 @@ cp .workspace.ini.example .workspace.ini
 
 git clone https://github.com/phpsoftbox/app-backend.git local/backend
 
+make init
 make up
-make composer-install
-make yarn-install
 make vite-dev
 ```
 
 Workspace - это одноразовый scaffold рабочей среды, а не git checkout для регулярных обновлений. После установки его можно спокойно менять под проект: редактировать compose/config, добавлять сервисы, локальные директории и override-файлы.
 
-`make composer-install`, `make yarn-install` и `make vite-dev` выполняются внутри Docker-окружения Workspace, поэтому локальные `php`, `composer`, `node` и `yarn` для этого сценария не нужны.
+`make init`, `make composer-install`, `make yarn-install` и `make vite-dev` выполняются внутри Docker-окружения Workspace, поэтому локальные `php`, `composer`, `node` и `yarn` для этого сценария не нужны.
+
+`make init` выполняет первичную подготовку приложения: генерирует `APP_KEY` в
+`.env`, если он ещё не задан, запускает `composer install` и `yarn install`.
+Эту команду нужно выполнить до первого `make up`, иначе web-профиль может
+стартовать раньше появления `vendor/autoload.php`.
 
 ## Структура
 
@@ -92,8 +95,6 @@ Workspace/
     mariadb/
       my.cnf
       init/
-    postgres/
-      init/
   local/
     backend/
 ```
@@ -108,25 +109,17 @@ Workspace/
 
 - `web`: `nginx`, `php-fpm`.
 - `cli`: `php-cli` для Composer, PHPUnit, PSB CLI и одноразовых команд.
-- `frontend`: отдельный `node`/`vite` service только для вынесенного frontend-проекта.
 - `mariadb`: MariaDB с healthcheck и volume.
-- `postgres`: PostgreSQL с healthcheck и volume.
 - `mongodb`: MongoDB с healthcheck и volume.
 - `redis`: Redis.
-- `memcached`: Memcached.
 - `mail`: Mailpit.
-- `s3`: MinIO для проверки `phpsoftbox/storage`.
 - `pdf` / `gotenberg`: Gotenberg для генерации PDF и офисных документов.
 - `queue`: queue worker, когда проект подключает очереди.
 - `scheduler`: long-running scheduler process, когда проект подключает планировщик.
 - `websocket`: Pushr WebSocket server.
-- `tg-bot-polling` / `telegram`: Telegram bot long polling process.
+- `tg-bot-polling`: Telegram bot long polling process.
 
-Traefik не входит в базовую обвязку. Для skeleton достаточно прямых портов; reverse proxy можно добавить отдельным compose override, если он нужен конкретному проекту.
-
-Если frontend собирается внутри backend-контейнера, отдельный `frontend` profile не нужен. В этом случае Node.js/Yarn добавляются в PHP dev image, Vite запускается внутри backend service от проектного пользователя, а порт `5173` прокидывается из `php-fpm` в `web` profile.
-
-`FRONTEND_PATH` используется только отдельным `frontend` profile. Если frontend лежит внутри backend-проекта, переменную можно оставить без изменений: при профилях `web cli` она не участвует в запуске.
+Traefik не входит в базовую обвязку. Для локали reverse proxy подхватывается через доменные маршруты `dispatcher`, `tenant.*` и `ws`.
 
 ## Настройки Профилей
 
@@ -141,7 +134,7 @@ default_profiles = web cli
 
 ```ini
 [profiles]
-default_profiles = web cli mariadb postgres mongodb redis mail s3 pdf
+default_profiles = web cli mariadb mongodb redis mail pdf queue scheduler websocket tg-bot-polling gotenberg
 ```
 
 Разовый запуск можно переопределить через переменную Make:
@@ -171,11 +164,9 @@ php psb auth:<TAB>
 
 ```bash
 make up
-make up PROFILES="web cli mariadb postgres redis mail s3"
 make up PROFILES="web cli mariadb mongodb redis mail pdf"
 make up PROFILES="web cli mariadb redis queue scheduler websocket"
 make up PROFILES="web cli mariadb redis tg-bot-polling"
-make up PROFILES="frontend"
 make down
 make down-clear
 ```
@@ -198,6 +189,7 @@ phpsoftbox shell
 ```bash
 make php-shell
 make -- php-run php -v
+make init
 make composer-install
 make composer-update
 make test
@@ -217,9 +209,9 @@ make vite-dev
 ```bash
 QUEUE_COMMAND="php psb queue:listen"
 SCHEDULER_COMMAND="php psb schedule:work"
-WEBSOCKET_COMMAND="php psb pushr:serve --host=0.0.0.0 --port=8080 --app-id=app-1 --secret=secret-1"
+WEBSOCKET_COMMAND="php psb pushr:serve:registry --host=0.0.0.0 --port=8080 --max-skew=300"
 TG_BOT_POLLING_COMMAND="php psb telegram:poll"
 ```
 
 Для multi-tenant проектов эти команды обычно переопределяются на проектные,
-например `tenant:pushr:serve` или `telegram:poll --scope=tenant`.
+например `tenant:pushr:serve:registry --tenant=all` или `tenant:telegram:poll --tenant=all`.
