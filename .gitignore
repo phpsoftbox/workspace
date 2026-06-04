@@ -1,0 +1,11 @@
+/local/*
+!/local/.gitkeep
+
+/.env
+/.env.local
+/.env.*.local
+/compose.override.yml
+/.workspace.ini
+
+.idea/
+.DS_Store

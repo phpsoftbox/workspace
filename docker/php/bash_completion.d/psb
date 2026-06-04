@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+
+_psb_pick_exec() {
+    local candidate
+    for candidate in "$@"; do
+        if [[ -n "$candidate" && -x "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+_psb_pick_file() {
+    local candidate
+    for candidate in "$@"; do
+        if [[ -n "$candidate" && -f "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+_psb_completion() {
+    local line_before="${COMP_LINE:0:COMP_POINT}"
+    local ends_with_space=0
+    local cur="${line_before##*[[:space:]]}"
+
+    [[ "$line_before" =~ [[:space:]]$ ]] && ends_with_space=1
+
+    local -a tokens
+    read -r -a tokens <<< "$line_before"
+    [[ ${#tokens[@]} -eq 0 ]] && return 0
+
+    local cmd_word_index=1
+    if [[ "${tokens[0]}" == "php" ]]; then
+        cmd_word_index=2
+    fi
+
+    local token_index=$(( ${#tokens[@]} - 1 ))
+    local completing_command=0
+    if [[ $ends_with_space -eq 1 ]]; then
+        if [[ $token_index -eq $((cmd_word_index - 1)) ]]; then
+            completing_command=1
+            cur=""
+        fi
+    else
+        if [[ $token_index -eq $cmd_word_index ]]; then
+            completing_command=1
+        fi
+    fi
+
+    [[ $completing_command -ne 1 ]] && return 0
+
+    local psb_cmd=()
+    if [[ "${tokens[0]}" == "php" ]]; then
+        local target="${tokens[1]:-}"
+        [[ -z "$target" ]] && return 0
+        [[ "$(basename -- "$target")" != "psb" ]] && return 0
+
+        local psb_file
+        psb_file="$(_psb_pick_file "$target" "./$target" ./psb ./vendor/bin/psb vendor/bin/psb ./bin/psb)"
+        [[ -z "$psb_file" ]] && return 0
+        psb_cmd=(php "$psb_file")
+    else
+        local first="${tokens[0]:-}"
+        local psb_bin
+        psb_bin="$(_psb_pick_exec "$first" "./$first" ./psb ./vendor/bin/psb vendor/bin/psb ./bin/psb)"
+        if [[ -z "$psb_bin" ]]; then
+            command -v psb >/dev/null 2>&1 && psb_bin="psb"
+        fi
+
+        [[ -z "$psb_bin" ]] && return 0
+        psb_cmd=("$psb_bin")
+    fi
+
+    local commands
+    commands="$("${psb_cmd[@]}" list 2>/dev/null | awk '/^- / {print $2}')"
+
+    local colon_break=0
+    [[ "$COMP_WORDBREAKS" == *:* ]] && colon_break=1
+
+    local prefix=""
+    if [[ $colon_break -eq 1 && "$cur" == *:* ]]; then
+        prefix="${cur%:*}:"
+    fi
+
+    local -a replies=()
+    local cmd
+    while IFS= read -r cmd; do
+        [[ -z "$cmd" ]] && continue
+        [[ -z "$cur" || "$cmd" == "$cur"* ]] || continue
+        if [[ -n "$prefix" ]]; then
+            replies+=("${cmd#"$prefix"}")
+        else
+            replies+=("$cmd")
+        fi
+    done <<< "$commands"
+
+    COMPREPLY=("${replies[@]}")
+}
+
+complete -o bashdefault -o default -o nospace -F _psb_completion psb
+complete -o bashdefault -o default -o nospace -F _psb_completion ./psb
+complete -o bashdefault -o default -o nospace -F _psb_completion ./vendor/bin/psb
+complete -o bashdefault -o default -o nospace -F _psb_completion vendor/bin/psb
+complete -o bashdefault -o default -o nospace -F _psb_completion ./bin/psb
+complete -o bashdefault -o default -o nospace -F _psb_completion php
