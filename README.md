@@ -17,11 +17,7 @@ MVP installer работает через локальные `php-cli`, `ext-mbs
 Установка через Composer:
 
 ```bash
-composer global require \
-  phpsoftbox/installer:dev-master \
-  phpsoftbox/cli-app:dev-master \
-  phpsoftbox/error-formatter:dev-master \
-  --prefer-stable
+composer global require phpsoftbox/installer:^1.0
 ```
 
 После установки `phpsoftbox workspace:install [dir]` можно запускать из любой директории. Все остальные команды `phpsoftbox` запускаются из корня Workspace: там должны лежать `compose.yml`, `.env` и `.workspace.ini`.
